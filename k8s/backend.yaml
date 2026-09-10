@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: cuy-peru
+data:
+  PORT: "5000"
+  NODE_ENV: production
+  CORS_ORIGIN: https://www.cuyperu.pe
+  JWT_EXPIRES_IN: 7d
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-secret
+  namespace: cuy-peru
+type: Opaque
+stringData:
+  DATABASE_URL: postgresql://postgres:change-me-prod@postgres:5432/cuy_ecommerce?schema=public
+  JWT_SECRET: change-me-prod-long-random-string
+  WHATSAPP_NUMBER: "51999888777"
+  # STRIPE_SECRET_KEY: ""   # enable when payments go live
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: cuy-peru
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      initContainers:
+        - name: apply-migrations
+          image: ghcr.io/cuy-peru/backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "npx prisma migrate deploy"]
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+      containers:
+        - name: backend
+          image: ghcr.io/cuy-peru/backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: cuy-peru
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 80
+      targetPort: 5000
+  type: ClusterIP
